@@ -275,6 +275,45 @@ jobs:
           echo "=== FULL Cust helper ==="
           cat work/dongchen/smali/com/github/catvod/spider/xm/Cust.smali
 
+      - name: Remove only the injected site branding text
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib
+          import re
+
+          path = pathlib.Path("work/dongchen/smali/com/github/catvod/spider/xm/Cust.smali")
+          source = path.read_text(encoding="utf-8")
+          # These three constants are injected branding/disclaimer strings.
+          source = re.sub(
+              r'^\\.field static final (?:N|P|P2):Ljava/lang/String; = .*?\\n',
+              '',
+              source,
+              flags=re.M,
+          )
+          # The original helper's fix() adds the injected "高清4K影视专线"
+          # suffix to playback-line names. Keep the method/API, but pass the
+          # source JSON through unchanged so original site data is preserved.
+          replacement = (
+              '.method public static fix(Ljava/lang/String;)Ljava/lang/String;\\n'
+              '    .locals 0\\n'
+              '    return-object p0\\n'
+              '.end method'
+          )
+          source, count = re.subn(
+              r'(?ms)^\\.method public static fix\\(Ljava/lang/String;\\)Ljava/lang/String;\\n.*?^\\.end method',
+              lambda _: replacement,
+              source,
+          )
+          if count != 1:
+              raise SystemExit(f"Expected exactly one Cust.fix method, found {count}")
+          if any(token in source for token in (r'\\u9ad8\\u6e054K\\u5f71\\u89c6\\u4e13\\u7ebf', r'\\u26d4\\u8b66\\u544a')):
+              raise SystemExit("Injected branding text remains in Cust helper")
+          path.write_text(source, encoding="utf-8")
+          print("Removed injected branding constants and suffix; preserved helper signatures.")
+          PY
+
       - name: Assemble merged DEX
         shell: bash
         run: |
@@ -306,6 +345,15 @@ jobs:
           grep -q 'AnnouncementPopup;->run(Landroid/content/Context;)V' work/verify/smali/com/example/popup/GateHook.smali
           test -s work/verify/smali/com/example/popup/AnnouncementPopup.smali
           grep -q 'https://lihansong.top/jar/api.php' work/verify/smali/com/example/popup/AnnouncementPopup.smali
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("work/verify/smali/com/github/catvod/spider/xm/Cust.smali")
+          s = p.read_text(encoding="utf-8")
+          assert r'\\u9ad8\\u6e054K\\u5f71\\u89c6\\u4e13\\u7ebf' not in s
+          assert r'\\u26d4\\u8b66\\u544a' not in s
+          assert '.method public static fix(Ljava/lang/String;)Ljava/lang/String;' in s
+          print("Injected site branding cleanup verified.")
+          PY
           echo 'Static verification passed.'
           sha256sum dongchen.jar '最终版.jar' "$OUTPUT"
 
