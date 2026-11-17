@@ -545,35 +545,48 @@ jobs:
           import pathlib
           import re
 
-          path = pathlib.Path("work/dongchen/smali/com/github/catvod/spider/xm/Cust.smali")
+          root = pathlib.Path("work/dongchen/smali")
+          path = root / "com/github/catvod/spider/xm/Cust.smali"
           source = path.read_text(encoding="utf-8")
-          # These three constants are injected branding/disclaimer strings.
-          source = re.sub(
-              r'^\.field static final (?:N|P|P2):Ljava/lang/String; = .*?\n',
+
+          # The branding/disclaimer fields are unused constants; confirm no
+          # other smali class refers to them before removing them.
+          all_smali = "\\n".join(
+              p.read_text(encoding="utf-8", errors="replace")
+              for p in root.rglob("*.smali") if p != path
+          )
+          for field in ("N", "P", "P2"):
+              if re.search(r"Cust;->" + field + r":Ljava/lang/String;", all_smali):
+                  raise SystemExit(f"Cust.{field} is referenced; refusing to remove it")
+
+          source, fields_removed = re.subn(
+              r'^\\.field static final (?:N|P|P2):Ljava/lang/String; = .*?\\n',
               '',
               source,
               flags=re.M,
           )
-          # The original helper's fix() adds the injected "高清4K影视专线"
-          # suffix to playback-line names. Keep the method/API, but pass the
-          # source JSON through unchanged so original site data is preserved.
-          replacement = (
-              '.method public static fix(Ljava/lang/String;)Ljava/lang/String;\n'
-              '    .locals 0\n'
-              '    return-object p0\n'
-              '.end method'
-          )
-          source, count = re.subn(
-              r'(?ms)^\.method public static fix\(Ljava/lang/String;\)Ljava/lang/String;\n.*?^\.end method',
-              lambda _: replacement,
+          if fields_removed != 3:
+              raise SystemExit(f"Expected 3 unused branding constants, removed {fields_removed}")
+
+          # Keep Cust.fix's JSON parse/normalize/serialize behavior intact.
+          # Only blank its injected branding literal. The current DEX already
+          # jumps over the legacy suffix-building block, so no JSON logic is removed.
+          needle = r'const-string v12, "\\u9ad8\\u6e054K\\u5f71\\u89c6\\u4e13\\u7ebf"'
+          if source.count(needle) != 1:
+              raise SystemExit(f"Expected one injected line-name literal, found {source.count(needle)}")
+          source = source.replace(needle, 'const-string v12, ""', 1)
+
+          fix = re.search(
+              r'(?ms)^\\.method public static fix\\(Ljava/lang/String;\\)Ljava/lang/String;\\n.*?^\\.end method',
               source,
           )
-          if count != 1:
-              raise SystemExit(f"Expected exactly one Cust.fix method, found {count}")
-          if any(token in source for token in (r'\u9ad8\u6e054K\u5f71\u89c6\u4e13\u7ebf', r'\u26d4\u8b66\u544a')):
-              raise SystemExit("Injected branding text remains in Cust helper")
+          if not fix or "Lorg/json/JSONObject;-><init>" not in fix.group(0) or "Lorg/json/JSONObject;->toString()" not in fix.group(0):
+              raise SystemExit("Cust.fix JSON normalization logic was not preserved")
+          if any(token in source for token in (r'\\u9ad8\\u6e054K\\u5f71\\u89c6', r'\\u26d4\\u8b66\\u544a')):
+              raise SystemExit("Injected branding/disclaimer text remains in Cust helper")
+
           path.write_text(source, encoding="utf-8")
-          print("Removed injected branding constants and suffix; preserved helper signatures.")
+          print("Removed unused branding constants and neutralized the injected label; preserved Cust JSON logic.")
           PY
 
       - name: Assemble merged DEX
@@ -614,7 +627,11 @@ jobs:
           assert r'\u9ad8\u6e054K\u5f71\u89c6\u4e13\u7ebf' not in s
           assert r'\u26d4\u8b66\u544a' not in s
           assert '.method public static fix(Ljava/lang/String;)Ljava/lang/String;' in s
-          print("Injected site branding cleanup verified.")
+          fix = s[s.index('.method public static fix(Ljava/lang/String;)Ljava/lang/String;'):s.index('.end method', s.index('.method public static fix(Ljava/lang/String;)Ljava/lang/String;'))]
+          assert 'Lorg/json/JSONObject;-><init>' in fix
+          assert 'Lorg/json/JSONObject;->toString()' in fix
+          assert 'const-string v12, ""' in fix
+          print("Branding removed; Cust JSON normalization preserved.")
           PY
           echo 'Static verification passed.'
           sha256sum dongchen.jar '最终版.jar' "$OUTPUT"
