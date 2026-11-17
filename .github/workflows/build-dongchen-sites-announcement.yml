@@ -185,6 +185,38 @@ jobs:
           print("Inserted popup hook into the original dongchen Init class.")
           PY
 
+      - name: Audit parser entry points and shared helpers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib
+          import re
+
+          root = pathlib.Path("work/dongchen/smali/com/github/catvod")
+          names = [
+              "spider/DyGod.smali", "spider/AppDrama.smali", "spider/Gz360.smali",
+              "spider/AppRJ.smali", "spider/Web1905.smali", "spider/ShortHaokan.smali",
+              "spider/ShortXingya.smali", "spider/ShortQimao.smali", "spider/TingBokan.smali",
+              "spider/Kugou.smali", "spider/KuKuMusic.smali", "spider/Config.smali",
+              "spider/xm/Cust.smali", "spider/xm/YH.smali", "spider/xm/YH$1.smali",
+              "spider/xm/YH$2.smali", "spider/xm/InitX.smali",
+          ]
+          for name in names:
+              path = root / name
+              print(f"\n===== {name} =====")
+              if not path.is_file():
+                  print("MISSING")
+                  continue
+              data = path.read_text(encoding="utf-8", errors="replace")
+              for line in data.splitlines():
+                  stripped = line.strip()
+                  if (stripped.startswith(".super ") or stripped.startswith(".implements ")
+                      or stripped.startswith(".method ") or stripped.startswith("invoke-")
+                      or stripped.startswith("const-string") or stripped.startswith("check-cast")):
+                      print(stripped)
+          PY
+
       - name: Assemble merged DEX
         shell: bash
         run: |
