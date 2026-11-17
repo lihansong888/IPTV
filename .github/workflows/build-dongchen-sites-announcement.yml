@@ -551,7 +551,7 @@ jobs:
 
           # The branding/disclaimer fields are unused constants; confirm no
           # other smali class refers to them before removing them.
-          all_smali = "\\n".join(
+          all_smali = "\n".join(
               p.read_text(encoding="utf-8", errors="replace")
               for p in root.rglob("*.smali") if p != path
           )
@@ -560,7 +560,7 @@ jobs:
                   raise SystemExit(f"Cust.{field} is referenced; refusing to remove it")
 
           source, fields_removed = re.subn(
-              r'^\\.field static final (?:N|P|P2):Ljava/lang/String; = .*?\\n',
+              r'^\.field static final (?:N|P|P2):Ljava/lang/String; = .*?\n',
               '',
               source,
               flags=re.M,
@@ -571,18 +571,18 @@ jobs:
           # Keep Cust.fix's JSON parse/normalize/serialize behavior intact.
           # Only blank its injected branding literal. The current DEX already
           # jumps over the legacy suffix-building block, so no JSON logic is removed.
-          needle = r'const-string v12, "\\u9ad8\\u6e054K\\u5f71\\u89c6\\u4e13\\u7ebf"'
+          needle = r'const-string v12, "\u9ad8\u6e054K\u5f71\u89c6\u4e13\u7ebf"'
           if source.count(needle) != 1:
               raise SystemExit(f"Expected one injected line-name literal, found {source.count(needle)}")
           source = source.replace(needle, 'const-string v12, ""', 1)
 
           fix = re.search(
-              r'(?ms)^\\.method public static fix\\(Ljava/lang/String;\\)Ljava/lang/String;\\n.*?^\\.end method',
+              r'(?ms)^\.method public static fix\(Ljava/lang/String;\)Ljava/lang/String;\n.*?^\.end method',
               source,
           )
           if not fix or "Lorg/json/JSONObject;-><init>" not in fix.group(0) or "Lorg/json/JSONObject;->toString()" not in fix.group(0):
               raise SystemExit("Cust.fix JSON normalization logic was not preserved")
-          if any(token in source for token in (r'\\u9ad8\\u6e054K\\u5f71\\u89c6', r'\\u26d4\\u8b66\\u544a')):
+          if any(token in source for token in (r'\u9ad8\u6e054K\u5f71\u89c6', r'\u26d4\u8b66\u544a')):
               raise SystemExit("Injected branding/disclaimer text remains in Cust helper")
 
           path.write_text(source, encoding="utf-8")
