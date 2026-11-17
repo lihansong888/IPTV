@@ -286,7 +286,7 @@ jobs:
               for p in root.rglob("*.smali"):
                   data = p.read_bytes()
                   txt = data.decode("utf-8", errors="replace")
-                  m = re.search(r"^\.class\\s+.*?\\s+(L[^;]+;)", txt, re.M)
+                  m = re.search(r"^\.class\s+.*?\s+(L[^;]+;)", txt, re.M)
                   if m:
                       out[m.group(1)] = (p, txt, hashlib.sha256(data).hexdigest())
               return out
@@ -320,7 +320,7 @@ jobs:
                   t = line.strip()
                   if t.startswith((".class", ".super", ".implements", ".annotation", ".method")):
                       print(t)
-              for m in re.findall(r"invoke-[^ ]+\\s+\\{[^}]*\\},?\\s*(Lcom/github/catvod/crawler/[^;]+;->[^ ]+)", item[1]):
+              for m in re.findall(r"invoke-[^ ]+\s+\{[^}]*\},?\s*(Lcom/github/catvod/crawler/[^;]+;->[^ ]+)", item[1]):
                   print("BASE_CALL", m)
 
           print("=== PARSER NAME STRINGS IN CONFIG/LOADER CLASSES ===")
