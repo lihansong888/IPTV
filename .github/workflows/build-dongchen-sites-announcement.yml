@@ -464,7 +464,7 @@ jobs:
               for p in root.rglob("*.smali"):
                   data = p.read_bytes()
                   t = data.decode("utf-8", errors="replace")
-                  m = re.search(r"^\.class\\s+.*?\\s+(L[^;]+;)", t, re.M)
+                  m = re.search(r"^\.class\s+.*?\s+(L[^;]+;)", t, re.M)
                   if m:
                       out[m.group(1)] = (p, t, hashlib.sha256(data).hexdigest())
               return out
