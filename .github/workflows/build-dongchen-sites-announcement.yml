@@ -75,7 +75,7 @@ jobs:
               "Lcom/github/catvod/spider/Config;",
           ]
 
-          descriptor_re = re.compile(r"^\\.class\\s+.*?\\s+(L[^;]+;)", re.M)
+          descriptor_re = re.compile(r"^\.class\s+.*?\s+(L[^;]+;)", re.M)
           ref_re = re.compile(r"L[^;]+;")
 
           def index_classes(root):
@@ -163,7 +163,7 @@ jobs:
           target = pathlib.Path("work/dongchen/smali/com/github/catvod/spider/Init.smali")
           text = target.read_text(encoding="utf-8")
           pattern = re.compile(
-              r"(?ms)^\\.method[^\\n]*\\binit\\(Landroid/content/Context;\\)V\\n.*?^\\.end method"
+              r"(?ms)^\.method[^\n]*\binit\(Landroid/content/Context;\)V\n.*?^\.end method"
           )
           matches = list(pattern.finditer(text))
           if len(matches) != 1:
@@ -174,12 +174,12 @@ jobs:
           if call in block:
               raise SystemExit("Popup hook already exists; refusing duplicate injection")
 
-          returns = list(re.finditer(r"(?m)^\\s*return-void\\s*$", block))
+          returns = list(re.finditer(r"(?m)^\s*return-void\s*$", block))
           if len(returns) != 1:
               raise SystemExit(f"Expected one return-void in Init.init(Context), found {len(returns)}")
 
           pos = returns[0].start()
-          block = block[:pos] + "    " + call + "\\n" + block[pos:]
+          block = block[:pos] + "    " + call + "\n" + block[pos:]
           text = text[:matches[0].start()] + block + text[matches[0].end():]
           target.write_text(text, encoding="utf-8")
           print("Inserted popup hook into the original dongchen Init class.")
