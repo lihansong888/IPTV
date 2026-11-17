@@ -1,0 +1,75 @@
+name: Inspect Announcement JARs
+
+on:
+  push:
+    branches: [ Files ]
+    paths:
+      - '.github/workflows/inspect-announcement-jars.yml'
+      - 'dongchen.jar'
+      - '最终版.jar'
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: Files
+
+      - name: Install DEX tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsmali-java unzip zip
+          dpkg -L libsmali-java | grep -E '/(baksmali|smali)(-[0-9.]+)?\.jar$' || true
+
+      - name: Extract and disassemble both JARs
+        run: |
+          set -euo pipefail
+          test -s dongchen.jar
+          test -s '最终版.jar'
+          mkdir -p work/dongchen work/final
+          unzip -q dongchen.jar -d work/dongchen
+          unzip -q '最终版.jar' -d work/final
+          test -s work/dongchen/classes.dex
+          test -s work/final/classes.dex
+          BAKSMALI="$(find /usr/share/java -type f -name 'baksmali*.jar' | head -n 1)"
+          test -n "$BAKSMALI"
+          java -jar "$BAKSMALI" disassemble work/dongchen/classes.dex -o work/dongchen/smali
+          java -jar "$BAKSMALI" disassemble work/final/classes.dex -o work/final/smali
+
+      - name: Compare popup classes and initialization hooks
+        run: |
+          set -euo pipefail
+          {
+            echo '=== JAR sizes and DEX sizes ==='
+            stat -c '%n %s bytes' dongchen.jar '最终版.jar' work/dongchen/classes.dex work/final/classes.dex
+            echo
+            echo '=== Popup-related classes in final version ==='
+            find work/final/smali -type f | grep -Ei 'announcement|popup|gatehook' | sort || true
+            echo
+            echo '=== Popup-related classes in dongchen version ==='
+            find work/dongchen/smali -type f | grep -Ei 'announcement|popup|gatehook' | sort || true
+            echo
+            echo '=== Init classes in both versions ==='
+            find work/dongchen/smali work/final/smali -path '*/com/github/catvod/spider/Init.smali' -print
+            echo
+            echo '=== Hook references in final Init ==='
+            grep -n -C 5 -E 'GateHook|AnnouncementPopup' work/final/smali/com/github/catvod/spider/Init.smali || true
+            echo
+            echo '=== Init(Context) declaration in dongchen ==='
+            grep -n -A 35 -B 2 -E '^\.method.*init\(Landroid/content/Context;\)V' work/dongchen/smali/com/github/catvod/spider/Init.smali || true
+            echo
+            echo '=== Init(Context) declaration in final ==='
+            grep -n -A 35 -B 2 -E '^\.method.*init\(Landroid/content/Context;\)V' work/final/smali/com/github/catvod/spider/Init.smali || true
+          } | tee work/compare-report.txt
+          mkdir -p inspect-output
+          cp work/compare-report.txt inspect-output/
+          cp -a work/dongchen/smali inspect-output/dongchen-smali
+          cp -a work/final/smali inspect-output/final-smali
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: announcement-jar-inspection
+          path: inspect-output/
+          retention-days: 7
