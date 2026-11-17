@@ -1,0 +1,148 @@
+name: Build Dongchen With Final Announcement Popup
+
+on:
+  push:
+    branches: [ Files ]
+    paths:
+      - '.github/workflows/build-dongchen-announcement.yml'
+      - 'dongchen.jar'
+      - '最终版.jar'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source JARs
+        uses: actions/checkout@v4
+        with:
+          ref: Files
+
+      - name: Install DEX tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsmali-java unzip zip python3
+
+      - name: Extract and disassemble both JARs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dongchen.jar
+          test -s '最终版.jar'
+          mkdir -p work/dongchen work/final work/output
+          unzip -q dongchen.jar -d work/dongchen
+          unzip -q '最终版.jar' -d work/final
+          test -s work/dongchen/classes.dex
+          test -s work/final/classes.dex
+          BAKSMALI="$(find /usr/share/java -maxdepth 1 -type f -name 'baksmali*.jar' | sort | head -n 1)"
+          SMALI="$(find /usr/share/java -maxdepth 1 -type f -name 'smali-[0-9]*.jar' | sort | head -n 1)"
+          test -n "$BAKSMALI"
+          test -n "$SMALI"
+          echo "BAKSMALI=$BAKSMALI" >> "$GITHUB_ENV"
+          echo "SMALI=$SMALI" >> "$GITHUB_ENV"
+          java -jar "$BAKSMALI" disassemble work/dongchen/classes.dex -o work/dongchen/smali
+          java -jar "$BAKSMALI" disassemble work/final/classes.dex -o work/final/smali
+
+      - name: Transplant the exact popup classes from final JAR
+        shell: bash
+        run: |
+          set -euo pipefail
+          FINAL_POPUP='work/final/smali/com/example/popup'
+          TARGET_POPUP='work/dongchen/smali/com/example/popup'
+          test -s "$FINAL_POPUP/AnnouncementPopup.smali"
+          test -s "$FINAL_POPUP/GateHook.smali"
+          mkdir -p "$TARGET_POPUP"
+
+          # dongchen has no existing popup classes. Refuse to overwrite any
+          # unexpected class, then copy every compiled popup helper class
+          # exactly as it appears in the already-tested final JAR.
+          if find "$TARGET_POPUP" -maxdepth 1 -type f -name 'AnnouncementPopup*.smali' | grep -q .; then
+            echo 'Unexpected AnnouncementPopup class already exists in dongchen.'
+            exit 1
+          fi
+          if test -e "$TARGET_POPUP/GateHook.smali"; then
+            echo 'Unexpected GateHook already exists in dongchen.'
+            exit 1
+          fi
+          cp "$FINAL_POPUP"/AnnouncementPopup*.smali "$TARGET_POPUP/"
+          cp "$FINAL_POPUP/GateHook.smali" "$TARGET_POPUP/"
+
+          echo "Popup classes copied from final JAR:"
+          find "$TARGET_POPUP" -maxdepth 1 -type f \( -name 'AnnouncementPopup*.smali' -o -name 'GateHook.smali' \) -printf '%f\n' | sort
+
+      - name: Add the same initialization call to dongchen
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib
+          import re
+
+          target = pathlib.Path("work/dongchen/smali/com/github/catvod/spider/Init.smali")
+          text = target.read_text(encoding="utf-8")
+          pattern = re.compile(
+              r"(?ms)^\.method[^\n]*\binit\(Landroid/content/Context;\)V\n.*?^\.end method"
+          )
+          matches = list(pattern.finditer(text))
+          if len(matches) != 1:
+              raise SystemExit(f"Expected one Init.init(Context), found {len(matches)}")
+
+          block = matches[0].group(0)
+          call = "invoke-static {p0}, Lcom/example/popup/GateHook;->run(Landroid/content/Context;)V"
+          if call in block:
+              raise SystemExit("Popup hook already exists; refusing duplicate injection")
+
+          returns = list(re.finditer(r"(?m)^\s*return-void\s*$", block))
+          if len(returns) != 1:
+              raise SystemExit(f"Expected one return-void in Init.init(Context), found {len(returns)}")
+
+          pos = returns[0].start()
+          block = block[:pos] + "    " + call + "\n" + block[pos:]
+          text = text[:matches[0].start()] + block + text[matches[0].end():]
+          target.write_text(text, encoding="utf-8")
+          print("Inserted the final JAR's popup initialization call.")
+          PY
+
+      - name: Assemble merged DEX
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -jar "$SMALI" assemble work/dongchen/smali -o work/output/classes.dex
+          test -s work/output/classes.dex
+          echo "Original DEX: $(stat -c %s work/dongchen/classes.dex) bytes"
+          echo "Merged DEX:   $(stat -c %s work/output/classes.dex) bytes"
+
+      - name: Build output JAR and remove invalid old signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp dongchen.jar dongchen-announcement-test.jar
+          zip -q -d dongchen-announcement-test.jar classes.dex
+          cp work/output/classes.dex classes.dex
+          zip -X -q dongchen-announcement-test.jar classes.dex
+          rm classes.dex
+          zip -q -d dongchen-announcement-test.jar 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*.DSA' 'META-INF/*.EC' 'META-INF/SIG-*' || true
+          unzip -t dongchen-announcement-test.jar
+          unzip -l dongchen-announcement-test.jar
+
+      - name: Verify transplanted popup, hook, and backend address
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p work/verify
+          unzip -p dongchen-announcement-test.jar classes.dex > work/verify/classes.dex
+          java -jar "$BAKSMALI" disassemble work/verify/classes.dex -o work/verify/smali
+          grep -q 'GateHook;->run(Landroid/content/Context;)V' work/verify/smali/com/github/catvod/spider/Init.smali
+          grep -q 'AnnouncementPopup;->run(Landroid/content/Context;)V' work/verify/smali/com/example/popup/GateHook.smali
+          test -s work/verify/smali/com/example/popup/AnnouncementPopup.smali
+          grep -q 'https://lihansong.top/jar/api.php' work/verify/smali/com/example/popup/AnnouncementPopup.smali
+          test "$(find work/verify/smali/com/example/popup -maxdepth 1 -type f -name 'AnnouncementPopup*.smali' | wc -l)" -ge 10
+          echo 'Static verification passed.'
+          sha256sum dongchen.jar '最终版.jar' dongchen-announcement-test.jar
+
+      - name: Upload test JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: dongchen-announcement-test-jar
+          path: dongchen-announcement-test.jar
+          retention-days: 7
