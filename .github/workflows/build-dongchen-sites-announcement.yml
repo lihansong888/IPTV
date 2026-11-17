@@ -268,6 +268,80 @@ jobs:
                           break
           PY
 
+      - name: Deep audit parser compatibility and registration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib, re, hashlib
+
+          roots = {"dongchen": pathlib.Path("work/dongchen/smali"),
+                   "final": pathlib.Path("work/final/smali")}
+          parsers = ["DyGod", "AppDrama", "Gz360", "AppRJ", "Web1905",
+                     "ShortHaokan", "ShortXingya", "ShortQimao", "TingBokan",
+                     "Kugou", "KuKuMusic", "Config"]
+
+          def index(root):
+              out = {}
+              for p in root.rglob("*.smali"):
+                  data = p.read_bytes()
+                  txt = data.decode("utf-8", errors="replace")
+                  m = re.search(r"^\.class\\s+.*?\\s+(L[^;]+;)", txt, re.M)
+                  if m:
+                      out[m.group(1)] = (p, txt, hashlib.sha256(data).hexdigest())
+              return out
+
+          a, b = index(roots["dongchen"]), index(roots["final"])
+          print("CLASS_COUNTS", len(a), len(b))
+          prefixes = ("Lcom/github/catvod/crawler/", "Lcom/github/catvod/api/",
+                      "Lcom/github/catvod/bean/", "Lcom/github/catvod/spider/")
+          diffs = [d for d in sorted(set(a) & set(b))
+                   if d.startswith(prefixes) and a[d][2] != b[d][2]]
+          print("SHARED_FRAMEWORK_AND_SPIDER_DIFFS", len(diffs))
+          for d in diffs[:250]:
+              print("DIFF", d)
+
+          for label, idx in (("dongchen", a), ("final", b)):
+              print("=== SPIDER BASE", label, "===")
+              item = idx.get("Lcom/github/catvod/crawler/Spider;")
+              if item:
+                  for line in item[1].splitlines():
+                      if line.strip().startswith((".class", ".super", ".method", ".implements")):
+                          print(line.strip())
+
+          for name in parsers:
+              d = "Lcom/github/catvod/spider/" + name + ";"
+              print("=== PARSER", name, "===")
+              item = b.get(d)
+              if not item:
+                  print("MISSING_FROM_FINAL")
+                  continue
+              for line in item[1].splitlines():
+                  t = line.strip()
+                  if t.startswith((".class", ".super", ".implements", ".annotation", ".method")):
+                      print(t)
+              for m in re.findall(r"invoke-[^ ]+\\s+\\{[^}]*\\},?\\s*(Lcom/github/catvod/crawler/[^;]+;->[^ ]+)", item[1]):
+                  print("BASE_CALL", m)
+
+          print("=== PARSER NAME STRINGS IN CONFIG/LOADER CLASSES ===")
+          needles = set(parsers + ["com.github.catvod.spider.", "csp_"])
+          for label, root in roots.items():
+              print("---", label, "---")
+              count = 0
+              for p in sorted(root.rglob("*.smali")):
+                  txt = p.read_text(encoding="utf-8", errors="replace")
+                  hits = [line.strip() for line in txt.splitlines()
+                          if "const-string" in line and any(n in line for n in needles)]
+                  if hits:
+                      print("CLASS", p.relative_to(root))
+                      for line in hits[:80]:
+                          print(line)
+                      count += 1
+                      if count >= 80:
+                          print("TRUNCATED")
+                          break
+          PY
+
       - name: Inspect custom text helper before cleanup
         shell: bash
         run: |
