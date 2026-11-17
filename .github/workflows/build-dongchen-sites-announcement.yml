@@ -417,7 +417,7 @@ jobs:
                      "Lcom/github/catvod/crawler/SpiderDebug;->")
 
           def refs(text):
-              return {m for m in re.findall(r"invoke-[^\\n]*?\\s+(Lcom/github/catvod/crawler/(?:Spider|SpiderDebug);->[^\\s]+)", text)}
+              return {m for m in re.findall(r"invoke-[^\n]*?\s+(Lcom/github/catvod/crawler/(?:Spider|SpiderDebug);->[^\s]+)", text)}
 
           baseline = set()
           baseline_classes = []
