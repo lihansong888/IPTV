@@ -401,6 +401,49 @@ jobs:
                   print("MISSING_SUPPORT_TYPE", desc)
           PY
 
+      - name: Compare new parser host API calls against original parsers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib, re
+
+          old = pathlib.Path("work/dongchen/smali")
+          new = pathlib.Path("work/final/smali")
+          names = ["DyGod", "AppDrama", "Gz360", "AppRJ", "Web1905",
+                   "ShortHaokan", "ShortXingya", "ShortQimao", "TingBokan",
+                   "Kugou", "KuKuMusic", "Config"]
+          targets = ("Lcom/github/catvod/crawler/Spider;->",
+                     "Lcom/github/catvod/crawler/SpiderDebug;->")
+
+          def refs(text):
+              return {m for m in re.findall(r"invoke-[^\\n]*?\\s+(Lcom/github/catvod/crawler/(?:Spider|SpiderDebug);->[^\\s]+)", text)}
+
+          baseline = set()
+          baseline_classes = []
+          for p in old.rglob("*.smali"):
+              t = p.read_text(encoding="utf-8", errors="replace")
+              if ".super Lcom/github/catvod/crawler/Spider;" in t:
+                  baseline_classes.append(str(p.relative_to(old)))
+                  baseline |= refs(t)
+
+          added = set()
+          for name in names:
+              p = new / "com/github/catvod/spider" / (name + ".smali")
+              if p.is_file():
+                  added |= refs(p.read_text(encoding="utf-8", errors="replace"))
+
+          print("ORIGINAL_SPIDER_SUBCLASSES", len(baseline_classes))
+          print("ORIGINAL_HOST_API_CALLS", len(baseline))
+          print("NEW_PARSER_HOST_API_CALLS", len(added))
+          print("CALLS_NOT_SEEN_IN_ORIGINAL_PARSERS")
+          for item in sorted(added - baseline):
+              print("NEW_HOST_CALL", item)
+          print("ORIGINAL_PARSER_EXAMPLES")
+          for item in baseline_classes[:30]:
+              print("ORIGINAL", item)
+          PY
+
       - name: Inspect custom text helper before cleanup
         shell: bash
         run: |
