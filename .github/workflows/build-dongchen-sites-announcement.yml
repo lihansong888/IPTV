@@ -342,6 +342,65 @@ jobs:
                           break
           PY
 
+      - name: Inspect dynamic parser class loading and reflective dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib, re
+
+          root = pathlib.Path("work/final/smali")
+          parser_names = {"DyGod", "AppDrama", "Gz360", "AppRJ", "Web1905",
+                          "ShortHaokan", "ShortXingya", "ShortQimao", "TingBokan",
+                          "Kugou", "KuKuMusic", "Config"}
+          parser_files = [root / "com/github/catvod/spider" / (n + ".smali")
+                          for n in sorted(parser_names)]
+          print("=== REFLECTION IN PARSER ROOTS ===")
+          for p in parser_files:
+              if not p.is_file():
+                  continue
+              lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+              hits = [(i, line.strip()) for i, line in enumerate(lines)
+                      if any(x in line for x in ("Class;->forName", "ClassLoader;->loadClass",
+                                                  "getDeclaredConstructor", "newInstance",
+                                                  "const-class"))]
+              if hits:
+                  print("CLASS", p.name)
+                  for i, line in hits:
+                      print(f"{i+1}: {line}")
+                      for extra in lines[max(0, i-3):min(len(lines), i+4)]:
+                          if extra.strip().startswith("const-string"):
+                              print("  STRING", extra.strip())
+
+          print("=== REFLECTIVE LOADER IMPLEMENTATIONS ===")
+          shown = 0
+          for p in sorted(root.rglob("*.smali")):
+              if "/merge/" not in str(p):
+                  continue
+              lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+              if not any("ClassLoader;->loadClass" in x or
+                         "Class;->forName" in x for x in lines):
+                  continue
+              print("===== ", p.relative_to(root), " =====")
+              for line in lines[:260]:
+                  print(line)
+              shown += 1
+              if shown >= 12:
+                  print("TRUNCATED_AT_12_LOADER_CLASSES")
+                  break
+
+          print("=== REQUIRED SUPPORT TYPES USED BY PARSERS ===")
+          descriptors = set()
+          for p in parser_files:
+              if p.is_file():
+                  descriptors.update(re.findall(r"Lcom/github/catvod/[^;]+;", p.read_text(encoding="utf-8", errors="replace")))
+          for desc in sorted(descriptors):
+              rel = pathlib.Path(*desc[1:-1].split("/")).with_suffix(".smali")
+              exists = (root / rel).is_file()
+              if not exists:
+                  print("MISSING_SUPPORT_TYPE", desc)
+          PY
+
       - name: Inspect custom text helper before cleanup
         shell: bash
         run: |
