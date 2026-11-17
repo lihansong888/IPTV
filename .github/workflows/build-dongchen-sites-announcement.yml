@@ -287,7 +287,7 @@ jobs:
           source = path.read_text(encoding="utf-8")
           # These three constants are injected branding/disclaimer strings.
           source = re.sub(
-              r'^\\.field static final (?:N|P|P2):Ljava/lang/String; = .*?\\n',
+              r'^\.field static final (?:N|P|P2):Ljava/lang/String; = .*?\n',
               '',
               source,
               flags=re.M,
@@ -296,19 +296,19 @@ jobs:
           # suffix to playback-line names. Keep the method/API, but pass the
           # source JSON through unchanged so original site data is preserved.
           replacement = (
-              '.method public static fix(Ljava/lang/String;)Ljava/lang/String;\\n'
-              '    .locals 0\\n'
-              '    return-object p0\\n'
+              '.method public static fix(Ljava/lang/String;)Ljava/lang/String;\n'
+              '    .locals 0\n'
+              '    return-object p0\n'
               '.end method'
           )
           source, count = re.subn(
-              r'(?ms)^\\.method public static fix\\(Ljava/lang/String;\\)Ljava/lang/String;\\n.*?^\\.end method',
+              r'(?ms)^\.method public static fix\(Ljava/lang/String;\)Ljava/lang/String;\n.*?^\.end method',
               lambda _: replacement,
               source,
           )
           if count != 1:
               raise SystemExit(f"Expected exactly one Cust.fix method, found {count}")
-          if any(token in source for token in (r'\\u9ad8\\u6e054K\\u5f71\\u89c6\\u4e13\\u7ebf', r'\\u26d4\\u8b66\\u544a')):
+          if any(token in source for token in (r'\u9ad8\u6e054K\u5f71\u89c6\u4e13\u7ebf', r'\u26d4\u8b66\u544a')):
               raise SystemExit("Injected branding text remains in Cust helper")
           path.write_text(source, encoding="utf-8")
           print("Removed injected branding constants and suffix; preserved helper signatures.")
