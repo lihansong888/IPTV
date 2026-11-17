@@ -1,0 +1,227 @@
+name: Build Dongchen With Missing Site Parsers And Final Popup
+
+on:
+  push:
+    branches: [ Files ]
+    paths:
+      - '.github/workflows/build-dongchen-sites-announcement.yml'
+      - 'dongchen.jar'
+      - '最终版.jar'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source JARs
+        uses: actions/checkout@v4
+        with:
+          ref: Files
+
+      - name: Install DEX tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsmali-java unzip zip python3
+
+      - name: Extract and disassemble both JARs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dongchen.jar
+          test -s '最终版.jar'
+          mkdir -p work/dongchen work/final work/output
+          unzip -q dongchen.jar -d work/dongchen
+          unzip -q '最终版.jar' -d work/final
+          test -s work/dongchen/classes.dex
+          test -s work/final/classes.dex
+          BAKSMALI="$(find /usr/share/java -maxdepth 1 -type f -name 'baksmali*.jar' | sort | head -n 1)"
+          SMALI="$(find /usr/share/java -maxdepth 1 -type f -name 'smali-[0-9]*.jar' | sort | head -n 1)"
+          test -n "$BAKSMALI"
+          test -n "$SMALI"
+          echo "BAKSMALI=$BAKSMALI" >> "$GITHUB_ENV"
+          echo "SMALI=$SMALI" >> "$GITHUB_ENV"
+          java -jar "$BAKSMALI" disassemble work/dongchen/classes.dex -o work/dongchen/smali
+          java -jar "$BAKSMALI" disassemble work/final/classes.dex -o work/final/smali
+
+      - name: Transplant missing configured site parsers and dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib
+          import re
+          import shutil
+
+          final_root = pathlib.Path("work/final/smali")
+          target_root = pathlib.Path("work/dongchen/smali")
+
+          # These are the configured API classes absent from dongchen.jar
+          # and present in the already-tested final JAR.
+          roots = [
+              "Lcom/github/catvod/spider/DyGod;",
+              "Lcom/github/catvod/spider/AppDrama;",
+              "Lcom/github/catvod/spider/Gz360;",
+              "Lcom/github/catvod/spider/AppRJ;",
+              "Lcom/github/catvod/spider/Web1905;",
+              "Lcom/github/catvod/spider/ShortHaokan;",
+              "Lcom/github/catvod/spider/ShortXingya;",
+              "Lcom/github/catvod/spider/ShortQimao;",
+              "Lcom/github/catvod/spider/TingBokan;",
+              "Lcom/github/catvod/spider/Kugou;",
+              "Lcom/github/catvod/spider/KuKuMusic;",
+              "Lcom/github/catvod/spider/Config;",
+          ]
+
+          descriptor_re = re.compile(r"^\\.class\\s+.*?\\s+(L[^;]+;)", re.M)
+          ref_re = re.compile(r"L[^;]+;")
+
+          def index_classes(root):
+              result = {}
+              for path in root.rglob("*.smali"):
+                  text = path.read_text(encoding="utf-8", errors="replace")
+                  match = descriptor_re.search(text)
+                  if match:
+                      result[match.group(1)] = path
+              return result
+
+          final_classes = index_classes(final_root)
+          target_classes = index_classes(target_root)
+
+          missing_roots = [item for item in roots if item not in final_classes]
+          if missing_roots:
+              raise SystemExit("Required parser class missing from final JAR: " + ", ".join(missing_roots))
+
+          queue = list(roots)
+          visited = set()
+          copied = []
+          while queue:
+              descriptor = queue.pop()
+              if descriptor in visited:
+                  continue
+              visited.add(descriptor)
+              source = final_classes.get(descriptor)
+              if source is None:
+                  continue
+
+              source_text = source.read_text(encoding="utf-8", errors="replace")
+              # The popup is copied separately, byte-for-byte, in the next step.
+              if not descriptor.startswith("Lcom/example/popup/") and descriptor not in target_classes:
+                  relative = source.relative_to(final_root)
+                  destination = target_root / relative
+                  destination.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copy2(source, destination)
+                  target_classes[descriptor] = destination
+                  copied.append(descriptor)
+
+              # Traverse final-JAR references so every missing dependency
+              # required by the selected parsers is included. Existing
+              # dongchen classes are preserved and never overwritten.
+              for reference in ref_re.findall(source_text):
+                  if reference in final_classes and reference not in visited:
+                      queue.append(reference)
+
+          for root in roots:
+              if root not in target_classes:
+                  raise SystemExit("Parser was not transplanted: " + root)
+
+          print(f"Configured parser roots: {len(roots)}")
+          print(f"Dependency classes examined: {len(visited)}")
+          print(f"Missing classes copied from final JAR: {len(copied)}")
+          print("Parser roots verified in merged smali:")
+          for root in roots:
+              print("  " + root)
+          PY
+
+      - name: Transplant the exact tested announcement popup
+        shell: bash
+        run: |
+          set -euo pipefail
+          FINAL_POPUP='work/final/smali/com/example/popup'
+          TARGET_POPUP='work/dongchen/smali/com/example/popup'
+          test -s "$FINAL_POPUP/AnnouncementPopup.smali"
+          test -s "$FINAL_POPUP/GateHook.smali"
+          mkdir -p "$TARGET_POPUP"
+          if test -e "$TARGET_POPUP/GateHook.smali"; then
+            echo 'Unexpected GateHook already exists in dongchen.'
+            exit 1
+          fi
+          cp "$FINAL_POPUP"/AnnouncementPopup*.smali "$TARGET_POPUP/"
+          cp "$FINAL_POPUP/GateHook.smali" "$TARGET_POPUP/"
+          find "$TARGET_POPUP" -maxdepth 1 -type f -printf '%f\n' | sort
+
+      - name: Add popup initialization call without replacing dongchen Init
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib
+          import re
+
+          target = pathlib.Path("work/dongchen/smali/com/github/catvod/spider/Init.smali")
+          text = target.read_text(encoding="utf-8")
+          pattern = re.compile(
+              r"(?ms)^\\.method[^\\n]*\\binit\\(Landroid/content/Context;\\)V\\n.*?^\\.end method"
+          )
+          matches = list(pattern.finditer(text))
+          if len(matches) != 1:
+              raise SystemExit(f"Expected one Init.init(Context), found {len(matches)}")
+
+          block = matches[0].group(0)
+          call = "invoke-static {p0}, Lcom/example/popup/GateHook;->run(Landroid/content/Context;)V"
+          if call in block:
+              raise SystemExit("Popup hook already exists; refusing duplicate injection")
+
+          returns = list(re.finditer(r"(?m)^\\s*return-void\\s*$", block))
+          if len(returns) != 1:
+              raise SystemExit(f"Expected one return-void in Init.init(Context), found {len(returns)}")
+
+          pos = returns[0].start()
+          block = block[:pos] + "    " + call + "\\n" + block[pos:]
+          text = text[:matches[0].start()] + block + text[matches[0].end():]
+          target.write_text(text, encoding="utf-8")
+          print("Inserted popup hook into the original dongchen Init class.")
+          PY
+
+      - name: Assemble merged DEX
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -jar "$SMALI" assemble work/dongchen/smali -o work/output/classes.dex
+          test -s work/output/classes.dex
+          echo "Original DEX: $(stat -c %s work/dongchen/classes.dex) bytes"
+          echo "Merged DEX:   $(stat -c %s work/output/classes.dex) bytes"
+
+      - name: Build and statically verify separate test JAR
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUTPUT='dongchen-sites-announcement-test.jar'
+          cp dongchen.jar "$OUTPUT"
+          zip -q -d "$OUTPUT" classes.dex
+          cp work/output/classes.dex classes.dex
+          zip -X -q "$OUTPUT" classes.dex
+          rm classes.dex
+          zip -q -d "$OUTPUT" 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*.DSA' 'META-INF/*.EC' 'META-INF/SIG-*' || true
+          unzip -t "$OUTPUT"
+          mkdir -p work/verify
+          unzip -p "$OUTPUT" classes.dex > work/verify/classes.dex
+          java -jar "$BAKSMALI" disassemble work/verify/classes.dex -o work/verify/smali
+          for parser in DyGod AppDrama Gz360 AppRJ Web1905 ShortHaokan ShortXingya ShortQimao TingBokan Kugou KuKuMusic Config; do
+            test -s "work/verify/smali/com/github/catvod/spider/$parser.smali"
+          done
+          grep -q 'GateHook;->run(Landroid/content/Context;)V' work/verify/smali/com/github/catvod/spider/Init.smali
+          grep -q 'AnnouncementPopup;->run(Landroid/content/Context;)V' work/verify/smali/com/example/popup/GateHook.smali
+          test -s work/verify/smali/com/example/popup/AnnouncementPopup.smali
+          grep -q 'https://lihansong.top/jar/api.php' work/verify/smali/com/example/popup/AnnouncementPopup.smali
+          echo 'Static verification passed.'
+          sha256sum dongchen.jar '最终版.jar' "$OUTPUT"
+
+      - name: Upload separate test JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: dongchen-sites-announcement-test-jar
+          path: dongchen-sites-announcement-test.jar
+          retention-days: 7
