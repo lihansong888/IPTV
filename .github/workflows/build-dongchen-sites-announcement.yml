@@ -444,6 +444,61 @@ jobs:
               print("ORIGINAL", item)
           PY
 
+      - name: Audit every shared class in parser dependency closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib, re, hashlib, collections
+
+          roots = [
+              "Lcom/github/catvod/spider/DyGod;", "Lcom/github/catvod/spider/AppDrama;",
+              "Lcom/github/catvod/spider/Gz360;", "Lcom/github/catvod/spider/AppRJ;",
+              "Lcom/github/catvod/spider/Web1905;", "Lcom/github/catvod/spider/ShortHaokan;",
+              "Lcom/github/catvod/spider/ShortXingya;", "Lcom/github/catvod/spider/ShortQimao;",
+              "Lcom/github/catvod/spider/TingBokan;", "Lcom/github/catvod/spider/Kugou;",
+              "Lcom/github/catvod/spider/KuKuMusic;", "Lcom/github/catvod/spider/Config;",
+          ]
+          def index(root):
+              out = {}
+              for p in root.rglob("*.smali"):
+                  data = p.read_bytes()
+                  t = data.decode("utf-8", errors="replace")
+                  m = re.search(r"^\.class\\s+.*?\\s+(L[^;]+;)", t, re.M)
+                  if m:
+                      out[m.group(1)] = (p, t, hashlib.sha256(data).hexdigest())
+              return out
+
+          a = index(pathlib.Path("work/dongchen/smali"))
+          b = index(pathlib.Path("work/final/smali"))
+          queue = list(roots)
+          seen = set()
+          refs = re.compile(r"L[^;]+;")
+          while queue:
+              d = queue.pop()
+              if d in seen:
+                  continue
+              seen.add(d)
+              item = b.get(d)
+              if item:
+                  for ref in refs.findall(item[1]):
+                      if ref in b and ref not in seen:
+                          queue.append(ref)
+
+          changed = [d for d in sorted(seen & set(a) & set(b)) if a[d][2] != b[d][2]]
+          groups = collections.Counter(d.split("/")[2] if d.startswith("Lcom/") else d.split("/")[1] for d in changed)
+          print("DEPENDENCY_CLOSURE_CLASSES", len(seen))
+          print("SHARED_CHANGED_CLASSES_IN_CLOSURE", len(changed))
+          print("CHANGED_GROUPS", dict(groups))
+          for d in changed[:400]:
+              print("CLOSURE_CONFLICT", d)
+          print("=== ARCHIVE RESOURCE INVENTORY ===")
+          PY
+          echo "--- dongchen.jar ---"
+          unzip -Z1 dongchen.jar | head -n 250
+          echo "--- final.jar ---"
+          unzip -Z1 '最终版.jar' | head -n 250
+
       - name: Inspect custom text helper before cleanup
         shell: bash
         run: |
