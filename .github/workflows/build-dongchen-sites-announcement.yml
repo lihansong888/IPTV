@@ -499,6 +499,37 @@ jobs:
           echo "--- final.jar ---"
           unzip -Z1 '最终版.jar' | head -n 250
 
+      - name: Inspect Dongchen parser bootstrap and site class loader
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== DONGCHEN Init ==="
+          cat work/dongchen/smali/com/github/catvod/spider/Init.smali
+          echo "=== FINAL Init ==="
+          cat work/final/smali/com/github/catvod/spider/Init.smali
+          python3 - <<'PY'
+          import pathlib
+          roots = [("dongchen", pathlib.Path("work/dongchen/smali")),
+                   ("final", pathlib.Path("work/final/smali"))]
+          terms = ("DexClassLoader", "PathClassLoader", "ClassLoader;->loadClass",
+                   "csp_", "com.github.catvod.spider.")
+          for label, root in roots:
+              print("=== LOADER STRING HITS", label, "===")
+              count = 0
+              for p in sorted(root.rglob("*.smali")):
+                  lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+                  hits = [(i, x.strip()) for i, x in enumerate(lines)
+                          if any(term in x for term in terms)]
+                  if hits:
+                      print("CLASS", p.relative_to(root))
+                      for i, x in hits[:60]:
+                          print(f"{i+1}: {x}")
+                      count += 1
+                      if count >= 120:
+                          print("TRUNCATED_AT_120_CLASSES")
+                          break
+          PY
+
       - name: Inspect custom text helper before cleanup
         shell: bash
         run: |
