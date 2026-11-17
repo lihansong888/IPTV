@@ -349,8 +349,8 @@ jobs:
           from pathlib import Path
           p = Path("work/verify/smali/com/github/catvod/spider/xm/Cust.smali")
           s = p.read_text(encoding="utf-8")
-          assert r'\\u9ad8\\u6e054K\\u5f71\\u89c6\\u4e13\\u7ebf' not in s
-          assert r'\\u26d4\\u8b66\\u544a' not in s
+          assert r'\u9ad8\u6e054K\u5f71\u89c6\u4e13\u7ebf' not in s
+          assert r'\u26d4\u8b66\u544a' not in s
           assert '.method public static fix(Ljava/lang/String;)Ljava/lang/String;' in s
           print("Injected site branding cleanup verified.")
           PY
